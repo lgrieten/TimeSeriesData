@@ -465,8 +465,6 @@ for(i in 1:length(UserID))
   Event_Flutter = Event[Event$FC.ID == UserID[i], ][6]$FLUTTER
   
   
-  
-  
   start_date = min(df$activated_timestamp)
   export_date = as.Date("2021-01-20")
   total_duration = as.numeric(export_date-start_date)
@@ -476,6 +474,50 @@ for(i in 1:length(UserID))
   #DeltaEvent3 = as.numeric(export_date-Event2)
   Total_study_inclusion_duration = EventExclusion - EventInclusion
   
+  
+  #SYMPTOM BURDEN BEFORE AND AFTER ECV CALCULATION
+    
+    ##Filter data before and after ECV
+  Data_before_ECV = df %>% rowwise() %>% filter(any(data.measurement_timestamp >=EventInclusion & data.measurement_timestamp <= Event1)) %>% filter(data.context.symptoms.0 != "NA")
+  Data_after_ECV = df %>% rowwise() %>% filter(any(data.measurement_timestamp >Event1 & data.measurement_timestamp <= EventExclusion)) %>% filter(data.context.symptoms.0 != "NA")
+    
+    ##Subset symptomatic DATA
+  
+  symptoms_before_ECV = nrow(Data_before_ECV  %>% filter(data.context.symptoms.0 == "No symptoms"))
+  symptoms_after_ECV = nrow(Data_after_ECV  %>% filter(data.context.symptoms.0 == "No symptoms"))
+  Symptomburden_before_ECV = symptoms_before_ECV/nrow(Data_before_ECV)
+  Symptomburden_after_ECV = symptoms_after_ECV/nrow(Data_after_ECV)
+
+  
+    #SYMPTOM BURDEN AF RECORDINGS BEFORE AND AFTER ECV CALCULATION
+  symptoms_AF_before_ECV = nrow(Data_before_ECV  %>% filter(data.indicator == "Urgent")%>% filter(data.context.symptoms.0 != "No symptoms" & data.context.symptoms.0 != "NA" ))
+  no_symptoms_AF_before_ECV = nrow(Data_before_ECV  %>% filter(data.indicator == "Urgent")%>% filter(data.context.symptoms.0 == "No symptoms"))
+  symptoms_AF_after_ECV = nrow(Data_after_ECV  %>% filter(data.indicator == "Urgent")%>% filter(data.context.symptoms.0 != "No symptoms" & data.context.symptoms.0 != "NA" ))
+  no_symptoms_AF_after_ECV = nrow(Data_after_ECV  %>% filter(data.indicator == "Urgent")%>% filter(data.context.symptoms.0 == "No symptoms"))
+  
+  
+    #ASYMPTOMATIC NON-AF PRE_ECV & POST ECV
+  symptoms_non_AF_before_ECV = nrow(Data_before_ECV  %>% filter(data.indicator != "Urgent")%>% filter(data.context.symptoms.0 != "No symptoms" & data.context.symptoms.0 != "NA" ))
+  no_symptoms_non_AF_before_ECV = nrow(Data_before_ECV  %>% filter(data.indicator != "Urgent")%>% filter(data.context.symptoms.0 == "No symptoms"))
+  symptoms_non_AF_after_ECV = nrow(Data_after_ECV  %>% filter(data.indicator != "Urgent")%>% filter(data.context.symptoms.0 != "No symptoms" & data.context.symptoms.0 != "NA" ))
+  no_symptoms_non_AF_after_ECV = nrow(Data_after_ECV  %>% filter(data.indicator != "Urgent")%>% filter(data.context.symptoms.0 == "No symptoms"))
+  
+    #Dominant Symptom before and after ECV
+   dom_symptom_before_ECV <- Data_before_ECV %>% filter(data.context.symptoms.0 != "No symptoms")%>%
+    group_by(symptoms=data.context.symptoms.0) %>%
+    summarise(cnt=n())%>%
+     arrange(desc(cnt))
+   dom_symptom_before_ECV <- dom_symptom_before_ECV[[1]]
+   amount_symptoms_before_ECV <- nrow(dom_symptom_before_ECV)
+
+     dom_symptom_after_ECV <- Data_after_ECV %>% filter(data.context.symptoms.0 != "No symptoms")%>%
+    group_by(symptoms=data.context.symptoms.0) %>%
+    summarise(cnt=n())%>%
+     arrange(desc(cnt))
+   dom_symptom_after_ECV <- dom_symptom_after_ECV[[1]]
+  amount_symptoms_after_ECV <- nrow(dom_symptom_after_ECV)
+
+   
   #VARIABLE CALCULATIONS
   #Step 1: Create the dataframes of relevance:
   
@@ -840,7 +882,8 @@ for(i in 1:length(UserID))
   
   
   
-  summary <- data.frame(UserID[i],EventInclusion, EventExclusion, Event1, Total_days, Tot_MeasurementsNA, Tot_Urgent_MeasurementsNA, Tot_Warning_MeasurementsNA, Tot_Quality_MeasurementsNA, Tot_Normal_MeasurementsNA, Tot_Measurements_NoQualityNA, Tot_Measurements_SymptomsNA, Tot_Measurements_Symptoms_NOQUALITYNA, Tot_NA_Measurements, Tot_NA_Symptoms, Tot_Measurements, Tot_Urgent_Measurements, Tot_Warning_Measurements, Tot_Quality_Measurements, Tot_Normal_Measurements, Tot_Measurements_NoQuality, Tot_Measurements_Symptoms, Tot_Measurements_Symptoms_NOQUALITY, Symptoms_AF, Symptoms_nonAF, Symptoms_warning, Symptoms_normal, Symptoms_qual, Total_days, Total_days_motivation_metbE1, compliance_window, motivation_window, ratio_sAF_AF, ratio_sAF_all, ratio_AF_all, ratio_s_all, sensitivity, specificity, accuracy,length_symptoms, length_af, ROCdata,Event_Flutter,palpitations_count, ROCdatapalp,shortness_of_breath_count, ROCdatasob,other_count, other_count, ROCdataother,no_symptoms_count, ROCdatanosymptoms,lightheaded_count, ROCdatalightheaded, fatigue_count, ROCdatafatigue, confused_count, ROCdataconfused, chestpains_count, ROCdatachest)  
+  summary <- data.frame(UserID[i],EventInclusion, EventExclusion, Event1, Total_days, Tot_MeasurementsNA, Tot_Urgent_MeasurementsNA, Tot_Warning_MeasurementsNA, Tot_Quality_MeasurementsNA, Tot_Normal_MeasurementsNA, Tot_Measurements_NoQualityNA, Tot_Measurements_SymptomsNA, Tot_Measurements_Symptoms_NOQUALITYNA, Tot_NA_Measurements, Tot_NA_Symptoms, Tot_Measurements, Tot_Urgent_Measurements, Tot_Warning_Measurements, Tot_Quality_Measurements, Tot_Normal_Measurements, Tot_Measurements_NoQuality, Tot_Measurements_Symptoms, Tot_Measurements_Symptoms_NOQUALITY, Symptoms_AF, Symptoms_nonAF, Symptoms_warning, Symptoms_normal, Symptoms_qual, Total_days, Total_days_motivation_metbE1, compliance_window, motivation_window, ratio_sAF_AF, ratio_sAF_all, ratio_AF_all, ratio_s_all, sensitivity, specificity, accuracy,length_symptoms, length_af, ROCdata,Event_Flutter,palpitations_count, ROCdatapalp,shortness_of_breath_count, ROCdatasob,other_count, other_count, ROCdataother,no_symptoms_count, ROCdatanosymptoms,lightheaded_count, ROCdatalightheaded, fatigue_count, ROCdatafatigue, confused_count, ROCdataconfused, chestpains_count, ROCdatachest,Symptomburden_before_ECV,Symptomburden_after_ECV,symptoms_AF_before_ECV,no_symptoms_AF_before_ECV,symptoms_AF_after_ECV,no_symptoms_AF_after_ECV, symptoms_non_AF_before_ECV,no_symptoms_non_AF_before_ECV,symptoms_non_AF_after_ECV,no_symptoms_non_AF_after_ECV,dom_symptom_before_ECV,amount_symptoms_before_ECV,dom_symptom_after_ECV,amount_symptoms_after_ECV )  
+  
   
   
   slide7 <- rbind(slide7,summary)
