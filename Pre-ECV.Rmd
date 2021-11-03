@@ -1,0 +1,953 @@
+---
+  title: "Measurement analysis"
+output: html_document
+---
+  <!-- Issues: -->
+  <!-- - sommige motviatie is boven 100%, reden om na tegaan van hoeveel dagen er opgenomen wordne in calculatie -->
+  5f105f55713c0900079595dd --> ackermans is een issue, zit niet in PRE-ECV...
+1. RAdar chart in box-window
+2. Most domininat symptom before cardioversion
+
+```{r}
+rm(list = ls())
+```
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(ggplot2)
+library(tidyr)
+library(dplyr)
+library(gtable)
+library(ggpubr)
+library(gridExtra)
+library(ROCR)
+library(lattice)
+library(caret)
+library(grid)
+library(dplyr)
+library(pivottabler)
+library(scales)
+library(writexl)
+library(fmsb) 
+library(ggplotify)
+library(ggradar)
+library(ROCit)
+
+
+```
+
+```{r}
+#input variables
+#iDays = 180
+#Enter.Y1= iDays
+Enter.X1= 1 # expected measurements
+Inclusiondate = 28 #days before the cardioversion date
+Exclusiondate = 21 #days after the cardioversion date
+
+```
+
+
+```{r EVENT SECTION PREPARATION}
+#prepare Events section
+
+Event = read.csv("/Volumes/GoogleDrive/Shared drives/9. Clinical/9.6 Data reporting/AZM/PRE-ECV /ggplt/events3.csv", sep=",")
+#Event = read.csv("events2.csv")
+Event <- Event[!apply(Event == "", 1, all), ]
+#rm(measurements)
+#DATA CONDITIONING
+
+#Measurements$userIds.0 = as.character(Measurements$userIds.0)
+Event$FC.ID = as.character(Event$FC.ID)
+Event$EVENT.1 = as.character(Event$EVENT.1)
+Event$INCLUSION.DATE = as.character(Event$INCLUSION.DATE)
+
+#Event$EVENT.2 = as.character(Event$EVENT.2)
+
+Event=Event[complete.cases(Event["EVENT.1"]),]
+for(k in 1:nrow(Event))
+{
+  Event$EVENT.1[k] = paste0(unlist(strsplit(Event$EVENT.1[k],"/"))[3],"-",
+                            unlist(strsplit(Event$EVENT.1[k],"/"))[2],"-",
+                            unlist(strsplit(Event$EVENT.1[k],"/"))[1])
+  
+  Event$INCLUSION.DATE[k] = paste0(unlist(strsplit(Event$INCLUSION.DATE[k],"/"))[3],"-",
+                                   unlist(strsplit(Event$INCLUSION.DATE[k],"/"))[2],"-",
+                                   unlist(strsplit(Event$INCLUSION.DATE[k],"/"))[1])
+  
+  # Event$EVENT.2[k] = paste0(unlist(strsplit(Event$EVENT.2[k],"/"))[3],"-",
+  #                           unlist(strsplit(Event$EVENT.2[k],"/"))[2],"-",
+  #                           unlist(strsplit(Event$EVENT.2[k],"/"))[1])
+}
+#Event = Event[1:103,]
+Event <- select(Event,FC.ID, INCLUSION.DATE, EVENT.1, X1e.ECV.uitgevoerd, EVENT.1.SUCCESS, FLUTTER)
+Event$EVENT.1 = as.Date(Event$EVENT.1)
+Event$INCLUSION.DATE = as.Date(Event$INCLUSION.DATE)
+
+#Event$EVENT.2 = as.Date(Event$EVENT.2)
+UserID = unique(Event$FC.ID)
+
+#Event$inclusion = Event$EVENT.1-Inclusiondate
+Event$inclusion = Event$INCLUSION.DATE
+
+Event$exclusion = Event$EVENT.1+Exclusiondate
+Event$Enrollment_duration = Event$exclusion - Event$inclusion
+```
+
+
+```{r} 
+#read the data
+measurements <- read.csv("/Volumes/GoogleDrive/Shared drives/9. Clinical/9.6 Data reporting/AZM/PRE-ECV /ggplt/measurements.csv", sep=";")
+measurements <- select(measurements, id, groupIds.0, userIds.0, status, data.measurement_timestamp, data.context.symptoms.0,data.context.activity,data.heartrate, data.indicator, data.algorithm.analysis, data.diagnosis.label.0, data.diagnosis_algorithm.label.0)
+
+
+prescriptions <- read.csv("/Volumes/GoogleDrive/Shared drives/9. Clinical/9.6 Data reporting/AZM/PRE-ECV /ggplt/prescriptions.csv", sep=";")
+pres.data <- select(prescriptions, id, group_id, user_id, duration,activated_timestamp)
+pres.data$time <- (pres.data$duration/86400000)
+pres.data$activated_timestamp <- as.Date(as.POSIXct((pres.data$activated_timestamp/1000) , origin = "1970-01-01"))
+
+#DELETE USERS FROM THE FRAME?
+#delete_users <- subset(Event,FLUTTER == 1)
+#delete_users <- delete_users$FC.ID
+#5d808a40c9e77c00089a7846 --> astrid
+#5f105f55713c0900079595dd --> acker Jos
+#5f105f55713c0900079595dd --> Jos ackermans
+#5f48e9cc5f150300079180c1 --> RACE_015 AZM
+#5f48e9cdee3588000777aeac --> RACE_017 AZM
+
+delete_users<- c("5d808a40c9e77c00089a7846", "5f105f55713c0900079595dd", "5f48e9cdee3588000777aeac","5f48e9cc5f150300079180c1")
+measurements = filter(measurements, !(userIds.0 %in% delete_users))
+pres.data = filter(pres.data, !(user_id %in% delete_users))
+Event = filter(Event, !(FC.ID %in% delete_users))
+UserID = unique(Event$FC.ID)
+
+#pres.data = subset(pres.data,time == iDays)
+pres.data <- pres.data[-which(pres.data$user_id == ""), ]
+# unique_pat = unique(Event$user_id)
+unique_pat = UserID
+Measurements = filter(measurements, (userIds.0 %in% unique_pat))
+Measurements = inner_join(Measurements,pres.data,by = c('userIds.0'='user_id'))
+Measurements$data.measurement_timestamp=as.Date(as.POSIXct((Measurements$data.measurement_timestamp/1000),origin = "1970-01-01 00:00:00:000"))
+
+```
+
+
+```{r}
+#data formatting
+
+#STEP 1: CREATE NEW COLUMN WHEN SYMPTOMS ARE PRESENT. 0 = NO SYMPTOMS, 1 = SYMPTOM
+
+unique(Measurements$data.context.symptoms.0)
+table(Measurements$data.context.symptoms.0)
+Measurements$data.context.symptoms.0 = as.character(Measurements$data.context.symptoms.0)
+for(i in 1:nrow(Measurements))
+{
+  if(Measurements$data.context.symptoms.0[i] == "no_symptoms")
+  {
+    Measurements$data.context.symptoms.sym[i]= "0"
+  }
+  else if(Measurements$data.context.symptoms.0[i] == "palpitations")
+  {
+    Measurements$data.context.symptoms.sym[i]= "1"
+  }
+  else if(Measurements$data.context.symptoms.0[i] == "fatigue")
+  {
+    Measurements$data.context.symptoms.sym[i]= "1"
+  }
+  else if(Measurements$data.context.symptoms.0[i] == "shortness_of_breath")
+  {
+    Measurements$data.context.symptoms.sym[i]= "1"
+  }
+  else if(Measurements$data.context.symptoms.0[i] == "lightheaded")
+  {
+    Measurements$data.context.symptoms.sym[i]= "1"
+  }
+  else if(Measurements$data.context.symptoms.0[i] == "other")
+  {
+    Measurements$data.context.symptoms.sym[i]= "1"
+  }
+  else if(Measurements$data.context.symptoms.0[i] == "Confused")
+  {
+    Measurements$data.context.symptoms.sym[i]= "1"
+  }
+  else if(Measurements$data.context.symptoms.0[i] == "chest_pains")
+  {
+    Measurements$data.context.symptoms.sym[i]= "1"
+  }
+  else
+  {
+    Measurements$data.context.symptoms.sym[i]="NA"
+  }
+}
+
+#STEP 2: REFORMAT NAMING OF THE SYMPTOMS TO READABLE TEXT
+
+
+for(i in 1:nrow(Measurements))
+{
+  if(Measurements$data.context.symptoms.0[i] == "no_symptoms")
+  {
+    Measurements$data.context.symptoms.0[i]= "No symptoms"
+  }
+  else if(Measurements$data.context.symptoms.0[i] == "palpitations")
+  {
+    Measurements$data.context.symptoms.0[i]= "Palpitations"
+  }
+  else if(Measurements$data.context.symptoms.0[i] == "fatigue")
+  {
+    Measurements$data.context.symptoms.0[i]= "Fatigue"
+  }
+  else if(Measurements$data.context.symptoms.0[i] == "shortness_of_breath")
+  {
+    Measurements$data.context.symptoms.0[i]= "Short Breath"
+  }
+  else if(Measurements$data.context.symptoms.0[i] == "lightheaded")
+  {
+    Measurements$data.context.symptoms.0[i]= "Lightheaded"
+  }
+  else if(Measurements$data.context.symptoms.0[i] == "other")
+  {
+    Measurements$data.context.symptoms.0[i]= "Other"
+  }
+  else if(Measurements$data.context.symptoms.0[i] == "confused")
+  {
+    Measurements$data.context.symptoms.0[i]= "Confused"
+  }
+  else if(Measurements$data.context.symptoms.0[i] == "chest_pains")
+  {
+    Measurements$data.context.symptoms.0[i]= "Chest Pains"
+  }
+  else
+  {
+    Measurements$data.context.symptoms.0[i]="NA"
+  }
+}
+#unique(Measurements$data.indicator)
+#table(Measurements$data.indicat)
+Measurements$data.indicator=as.character(Measurements$data.indicator)
+
+#STEP 3: CREATE NEW COLUMN WHEN SYMPTOMS ARE PRESENT. 0 = NO SYMPTOMS, 1 = SYMPTOM
+
+for(i in 1:nrow(Measurements))
+{
+  if(Measurements$data.indicator[i] == "urgent")
+  {
+    Measurements$data.indicator[i]= "Urgent"
+  }
+  else if(Measurements$data.indicator[i] == "warning")
+  {
+    Measurements$data.indicator[i]= "Warning"
+  }
+  else if(Measurements$data.indicator[i] == "quality")
+  {
+    Measurements$data.indicator[i]= "Quality"
+  }
+  else if(Measurements$data.indicator[i] == "normal")
+  {
+    Measurements$data.indicator[i]= "Normal"
+  }
+  else
+  {
+    Measurements$data.indicator[i]= "NA"
+  }
+}
+
+#STEP 4: CREATE NEW COLUMN AND SEPARATE AF VS NON-AF
+
+for(i in 1:nrow(Measurements))
+{
+  if(Measurements$data.indicator[i] == "Urgent")
+  {
+    Measurements$data.indicator.af[i]= "1"
+  }
+  else if(Measurements$data.indicator[i] == "Warning")
+  {
+    Measurements$data.indicator.af[i]= "0"
+  }
+  else if(Measurements$data.indicator[i] == "Quality")
+  {
+    Measurements$data.indicator.af[i]= "99"
+  }
+  else if(Measurements$data.indicator[i] == "Normal")
+  {
+    Measurements$data.indicator.af[i]= "0"
+  }
+  else
+  {
+    Measurements$data.indicator.af[i]= "NA"
+  }
+}
+Measurements$data.indicator=as.factor(Measurements$data.indicator)
+Measurements$data.context.symptoms.0 = as.factor(Measurements$data.context.symptoms.0)
+
+#Symptom specific columns
+#######
+### create Chestpains column
+for(i in 1:nrow(Measurements))
+{
+  if(Measurements$data.context.symptoms.0[i] == "Chest Pains")
+  {
+    Measurements$chestpains[i]= "1"
+  }
+  else
+  {
+    Measurements$chestpains[i]= "0"
+  }
+}
+
+### create confused column
+for(i in 1:nrow(Measurements))
+{
+  if(Measurements$data.context.symptoms.0[i] == "Confused")
+  {
+    Measurements$confused[i]= "1"
+  }
+  else
+  {
+    Measurements$confused[i]= "0"
+  }
+}
+### create fatigue column
+for(i in 1:nrow(Measurements))
+{
+  if(Measurements$data.context.symptoms.0[i] == "Fatigue")
+  {
+    Measurements$fatigue[i]= "1"
+  }
+  else
+  {
+    Measurements$fatigue[i]= "0"
+  }
+}
+
+### create lightheaded column
+for(i in 1:nrow(Measurements))
+{
+  if(Measurements$data.context.symptoms.0[i] == "Lightheaded")
+  {
+    Measurements$lightheaded[i]= "1"
+  }
+  else
+  {
+    Measurements$lightheaded[i]= "0"
+  }
+}
+### create no_symptoms column
+for(i in 1:nrow(Measurements))
+{
+  if(Measurements$data.context.symptoms.0[i] == "No symptoms")
+  {
+    Measurements$no_symptoms[i]= "1"
+  }
+  else
+  {
+    Measurements$no_symptoms[i]= "0"
+  }
+}
+### create other column
+for(i in 1:nrow(Measurements))
+{
+  if(Measurements$data.context.symptoms.0[i] == "Other")
+  {
+    Measurements$other[i]= "1"
+  }
+  else
+  {
+    Measurements$other[i]= "0"
+  }
+}
+### palpitations
+for(i in 1:nrow(Measurements))
+{
+  if(Measurements$data.context.symptoms.0[i] == "Palpitations")
+  {
+    Measurements$palpitations[i]= "1"
+  }
+  else
+  {
+    Measurements$palpitations[i]= "0"
+  }
+}
+
+### shortness of breath
+for(i in 1:nrow(Measurements))
+{
+  if(Measurements$data.context.symptoms.0[i] == "Short Breath")
+  {
+    Measurements$shortness_of_breath[i]= "1"
+  }
+  else
+  {
+    Measurements$shortness_of_breath[i]= "0"
+  }
+}
+Measurements = subset(Measurements,data.indicator != "quality")
+Measurements$data.indicator.af <- as.numeric(Measurements$data.indicator.af)
+Measurements$chestpains <- as.numeric(Measurements$chestpains)
+Measurements$palpitations <- as.numeric(Measurements$palpitations)
+Measurements$shortness_of_breath <- as.numeric(Measurements$shortness_of_breath)
+Measurements$other <- as.numeric(Measurements$other)
+Measurements$lightheaded <- as.numeric(Measurements$lightheaded)
+Measurements$confused <- as.numeric(Measurements$confused)
+Measurements$no_symptoms <- as.numeric(Measurements$no_symptoms)
+Measurements$lightheaded <- as.numeric(Measurements$lightheaded)
+Measurements$fatigue <- as.numeric(Measurements$fatigue)
+
+######
+
+
+
+
+
+for(i in 1:nrow(Event))
+{
+  if(Event$EVENT.1.SUCCESS[i] == "Ja")
+  {
+    Event$EVENT.1.SUCCESS[i]= "green"
+  }
+  else if(Event$EVENT.1.SUCCESS[i] == "Nee")
+  {
+    Event$EVENT.1.SUCCESS[i]= "red"
+  }
+  else if(Event$EVENT.1.SUCCESS[i] == "NVT")
+  {
+    Event$EVENT.1.SUCCESS[i]= "blue"
+  }
+}
+```
+
+
+
+```{r message=TRUE, warning=TRUE, paged.print=TRUE}
+###########################################################################################
+######################             EVENT BASED ANALYSIS   #################################
+###########################################################################################
+#UserID = unique(Measurements$userIds.0)
+slide7 = NULL
+pdf(file = "PDF_slide7.pdf",width = 20, height = 10)
+
+#####DATA SUBSETTER FOR TESTING AND DEVELOPMENT####
+#COMMENT IF NOT NEEDED
+#UserID <- UserID[1:1]
+
+
+
+
+
+for(i in 1:length(UserID))
+{
+  
+  #prepare dataframes of sub-set analysis
+  df = subset(Measurements,userIds.0 == UserID[i])
+  df$data.context.symptoms.sym = as.numeric(df$data.context.symptoms.sym)
+  #dfNQ = subset(df,data.indicator != "Quality")
+  
+  
+  
+  data1 = as.data.frame(table(df$data.indicator))
+  data1$new = paste0(data1$Var1," \n",round(data1$Freq*100/sum(data1$Freq),2),"%")
+  data1$new=cumsum(data1$Freq)
+  df$data.measurement_timestamp=as.Date(df$data.measurement_timestamp)
+  df$data.context.symptoms.0 <- as.character(df$data.context.symptoms.0)
+  df$symptoms <- as.numeric(ifelse((df$data.context.symptoms.0 == "NA")|(df$data.context.symptoms.0 == "No symptoms"),"0", "200"))
+  
+  symptoms <- df %>% 
+    group_by(symptoms=data.context.symptoms.0) %>%
+    summarise(cnt=n())
+  
+  #Event analysis
+  Event1 = Event[Event$FC.ID == UserID[i], ][3]$EVENT.1 
+  #Event2 = Event[Event$FC.ID == UserID[i], ][5]$EVENT.2
+  Event3_success = Event[Event$FC.ID == UserID[i], ][5]$EVENT.1.SUCCESS 
+  EventInclusion = Event[Event$FC.ID == UserID[i], ][7]$inclusion
+  EventExclusion =Event[Event$FC.ID == UserID[i], ][8]$exclusion
+  Event_Flutter = Event[Event$FC.ID == UserID[i], ][6]$FLUTTER
+  
+  
+  
+  
+  start_date = min(df$activated_timestamp)
+  export_date = as.Date("2021-01-20")
+  total_duration = as.numeric(export_date-start_date)
+  total_duration = ifelse(total_duration<180, export_date,180)
+  DeltaEvent1 = as.numeric(Event1 - start_date+1)
+  #DeltaEvent2 = as.numeric(Event2 - Event1)
+  #DeltaEvent3 = as.numeric(export_date-Event2)
+  Total_study_inclusion_duration = EventExclusion - EventInclusion
+  
+  #VARIABLE CALCULATIONS
+  #Step 1: Create the dataframes of relevance:
+  
+  ## DATA RELATED TO STUDY DURATION
+  df_window = df %>% rowwise() %>% filter(any(data.measurement_timestamp >=EventInclusion & data.measurement_timestamp <= EventExclusion))
+  
+  
+  data=as.data.frame(table(df_window$data.context.symptoms.0,df_window$data.indicator))
+  data$fraction = fraction=round((data$Freq/nrow(df_window))*100,1)
+  
+  
+  #create overview of all symptoms
+  symptoms_all <- df_window %>%
+    filter(data.indicator != "Quality")%>%
+    group_by(symptoms=data.context.symptoms.0) %>%
+    summarise(cnt=n())
+  symptoms_all <- as.data.frame(t(as.matrix(symptoms_all)))
+  colnames(symptoms_all) <- unlist(symptoms_all[row.names(symptoms_all)=='symptoms',])
+  symptoms_all <- symptoms_all[c(2),]
+  # 
+  # symptoms_af <- df_window %>%
+  #         filter(data.indicator == "Urgent")%>%
+  #          group_by(symptoms=data.context.symptoms.0) %>%
+  #          summarise(cnt=n())
+  # symptoms_af <- as.data.frame(t(as.matrix(symptoms_af)))
+  # colnames(symptoms_af) <- unlist(symptoms_af[row.names(symptoms_af)=='symptoms',])
+  # symptoms_af <- symptoms_af[c(2),]
+  Tot_MeasurementsNA = nrow(df_window)
+  Tot_Urgent_MeasurementsNA = nrow(subset(df_window,data.indicator == "Urgent"))
+  Tot_Warning_MeasurementsNA = nrow(subset(df_window,data.indicator == "Warning"))
+  Tot_Quality_MeasurementsNA = nrow(subset(df_window,data.indicator == "Quality"))
+  Tot_Normal_MeasurementsNA = nrow(subset(df_window,data.indicator == "Normal"))
+  Tot_Measurements_NoQualityNA = nrow(subset(df_window,data.indicator != "Quality")) 
+  Tot_Measurements_SymptomsNA = sum(df_window$data.context.symptoms.sym, na.rm = "TRUE")
+  Tot_Measurements_Symptoms_NOQUALITYNA = subset(df_window, data.indicator!= "Quality")
+  Tot_Measurements_Symptoms_NOQUALITYNA = sum(Tot_Measurements_Symptoms_NOQUALITYNA$data.context.symptoms.sym)
+  Tot_NA_Measurements = nrow(subset(df_window, data.indicator == "NA"))
+  Tot_NA_Symptoms = nrow(subset(df_window, data.context.symptoms.0 == "NA"))
+  
+  #remove NA's in dataframe
+  df_window = na.omit(df_window)
+  Tot_Measurements = nrow(df_window)
+  Tot_Urgent_Measurements = nrow(subset(df_window,data.indicator == "Urgent"))
+  Tot_Warning_Measurements = nrow(subset(df_window,data.indicator == "Warning"))
+  Tot_Quality_Measurements = nrow(subset(df_window,data.indicator == "Quality"))
+  Tot_Normal_Measurements = nrow(subset(df_window,data.indicator == "Normal"))
+  Tot_Measurements_NoQuality = nrow(subset(df_window,data.indicator != "Quality")) 
+  Tot_Measurements_Symptoms = sum(df_window$data.context.symptoms.sym, na.rm = "TRUE")
+  Tot_Measurements_Symptoms_NOQUALITY = subset(df_window, data.indicator!= "Quality")
+  Tot_Measurements_Symptoms_NOQUALITY = sum(Tot_Measurements_Symptoms_NOQUALITY$data.context.symptoms.sym, na.rm = "TRUE")
+  Symptoms_AF = subset(df_window, data.indicator.af== "1")
+  Symptoms_AF = sum(Symptoms_AF$data.context.symptoms.sym, na.rm = "TRUE")
+  
+  Symptoms_normal = subset(df_window, data.indicator== "Normal")
+  Symptoms_normal = sum(Symptoms_normal$data.context.symptoms.sym, na.rm = "TRUE")
+  
+  Symptoms_warning = subset(df_window, data.indicator== "Warning")
+  Symptoms_warning = sum(Symptoms_warning$data.context.symptoms.sym, na.rm = "TRUE")
+  
+  
+  Symptoms_nonAF = subset(df_window, data.indicator.af== "0")
+  Symptoms_nonAF = sum(Symptoms_nonAF$data.context.symptoms.sym, na.rm = "TRUE")
+  Symptoms_qual = subset(df_window, data.indicator.af== "99")
+  Symptoms_qual = sum( df_window$data.context.symptoms.sym, na.rm = "TRUE")
+  Total_days = as.numeric(EventExclusion - EventInclusion)+1
+  Total_days_motivation_metbE1 = sum(table(df_window$data.measurement_timestamp)>=Enter.X1)
+  compliance_window = round(100*sum(nrow(df_window))/(Total_days*Enter.X1),2)
+  motivation_window = round(sum((table(df_window$data.measurement_timestamp)>=Enter.X1))*100/Total_days,2)
+  ratio_sAF_AF = (Symptoms_AF/Tot_Urgent_Measurements)
+  ratio_sAF_all = (Symptoms_AF/Tot_Measurements_NoQuality)       ###DISCUSS??? QUALITY
+  ratio_AF_all = Tot_Urgent_Measurements/Tot_Measurements_NoQuality   ###DISCUSS??? QUALITY
+  ratio_s_all= ((Symptoms_nonAF+Symptoms_AF)/Tot_Measurements_NoQuality)  ###DISCUSS??? QUALITY
+  sensitivity = Symptoms_AF/(Tot_Urgent_Measurements)
+  specificity = ((Tot_Warning_Measurements+Tot_Normal_Measurements-Symptoms_nonAF)/(Tot_Warning_Measurements+Tot_Normal_Measurements))
+  accuracy = (Symptoms_AF+(Tot_Warning_Measurements + Tot_Normal_Measurements-Symptoms_nonAF))/Tot_Measurements_NoQuality
+  
+  #COMPUTE AUC
+  
+  
+  
+  df_window_red = subset(df_window,data.indicator != "Quality")
+  df_window_roc <- as.data.frame(select(df_window_red, data.indicator.af, data.context.symptoms.sym))
+  df_window_roc$data.indicator.af <- as.numeric(df_window_roc$data.indicator.af)
+  df_window_roc$data.context.symptoms.sym <- as.numeric(df_window_roc$data.context.symptoms.sym)
+  
+  
+  execpart = ifelse(nrow(df_window_roc)>10, "TRUE", "FALSE")
+  
+  #ROCit_obj <- rocit(score=df_window_roc$data.indicator.af,class=df_window_roc$data.context.symptoms.sym)
+  #ROCit_obj <- ifelse(nrow(df_window_roc)>10, rocit(score=df_window_roc$data.indicator.af,class=df_window_roc$data.context.symptoms.sym), "NA")
+  
+  # ROCit_obj <- rocit(score=df_window_roc$data.indicator.af,class=df_window_roc$data.context.symptoms.sym)
+  # ROCdata<-data.frame(t(sapply(ROCit_obj,c)))
+  # ROCdata<-select(ROCdata, pos_count, neg_count, AUC )
+  
+  length_symptoms = length(unique(df_window_roc$data.context.symptoms.sym))
+  length_af = length(unique(df_window_roc$data.indicator.af))
+  ROCdata = NULL
+  
+  if(length_symptoms==2 && length_af ==2){
+    ROCit_obj <- rocit(score=df_window_roc$data.indicator.af,class=df_window_roc$data.context.symptoms.sym)
+    ROCdata<-data.frame(t(sapply(ROCit_obj,c)))
+    ROCdata<-select(ROCdata, pos_count, neg_count, AUC )
+    ROCdata$pos_count = as.numeric(ROCdata$pos_count)
+    ROCdata$neg_count = as.numeric(ROCdata$neg_count)
+    ROCdata$AUC = as.numeric(ROCdata$AUC)} else {
+      ROCdata$pos_count <- "NA"
+      ROCdata$neg_count <- "NA"
+      ROCdata$AUC <- "NA"}
+  
+  #SPIDER PLOT AUC
+  spider_all <- c(1,ratio_sAF_AF,ratio_sAF_all, ratio_AF_all, ratio_s_all)
+  spider_all <- rbind(spider_all)
+  colnames(spider_all) <- c("group","sAF/AF" , "sAF/all" , "AF/all" , "s/all")
+  spider_all <- as.data.frame(spider_all,na.rm = TRUE)
+  spider_all[is.na(spider_all)] = 0
+  spidR_all <- ggradar(spider_all,base.size = 1, background.circle.colour = "white", grid.line.width = 0.3, grid.label.size = 5,  legend.text.size = 4 ,group.point.size=3,group.line.width=1)
+  
+  
+  #CHART 1:Rhythm symptom correlation stacked chart
+  
+  plot1 <-ggplot(data, aes(fill=Var2, y=fraction, x=Var1)) + 
+    geom_bar(position="stack", stat="identity")+
+    coord_flip()+
+    labs(x="",y="",title = "Symptoms") +
+    scale_fill_manual(values = c("Warning" = "orange", "Urgent" = "red", "Normal" = "green","Quality" = "blue","Symptoms Was Present"="black"))+
+    theme_minimal()+ theme(legend.position="none") + ylim(0,100)
+  
+  
+  
+  #CHART 2: PieChart plot of the measurement distribution
+  
+  data1$fraction <- round(data1$Freq/sum(data1$Freq),3)                     # Compute percentages of data 1 frame
+  data1$ymax <- cumsum(data1$fraction)                                      # Compute the cumulative percentages (top of each rectangle)
+  data1$ymin <- c(0, head(data1$ymax, n=-1))                                # Compute the bottom of each rectangle
+  data1$labelPosition <- (data1$ymax + data1$ymin) / 2                      # Compute label position
+  data1$label <- paste0(data1$Var1, "\n", paste0(data1$fraction*100,"%"))   # Compute a good label
+  
+  plot2 <-ggplot(data1, aes(ymax=ymax, ymin=ymin, xmax=3, xmin=2, fill=Var1)) +
+    geom_rect() +
+    geom_text( x=4, aes(y=labelPosition, label=label, color=Var1), size=3) + # x here controls label position (inner / outer)+
+    coord_polar(theta="y") +
+    scale_fill_manual(values = c("Warning" = "orange", "Urgent" = "red", 
+                                 "Normal" = "green","Quality" = "blue", "NA" = "grey"))+
+    scale_colour_manual(values = c("Warning" = "orange", "Urgent" = "red", 
+                                   "Normal" = "green","Quality" = "blue", "NA" = "grey"))+
+    xlim(c(-1, 4)) +
+    annotate(geom = 'text', x = 0.5, y = 0, label = paste0("n=",sum(data1$Freq) ))+
+    theme_void() +
+    theme(legend.position = "none")
+  
+  
+  
+  
+  
+  #CHART 3 RATE  & RHYTHM GRAPH
+  
+  
+  plot4<-ggplot(df) + 
+    geom_point(aes(x=data.measurement_timestamp, 
+                   y=data.heartrate, color=data.indicator)) + 
+    scale_colour_manual(values = c("Warning" = "orange", "Urgent" = "red",
+                                   "Normal" = "green","Quality" = "blue",
+                                   "Symptoms Was Present"="black"))+ 
+    geom_point(aes(x=data.measurement_timestamp, 
+                   y=symptoms)) + 
+    xlab("Date/time") + ylab("Heart rate (BPM)") + ylim(30, 200)+ theme_minimal() + 
+    labs(color='Heart rhythm', title= paste("User ID:",UserID[i], "compliance:",compliance_window,"motivation:",motivation_window, "flutter:",Event_Flutter, "#rec:",nrow(df_window))) +
+    theme(legend.title =element_blank(),legend.position = "top")+
+    geom_vline(xintercept = Event1, color=Event3_success,size=1)+ 
+    geom_vline(xintercept = EventExclusion, color ="black",size=1)
+  
+  rect <- data.frame(xmin=EventInclusion, xmax=EventExclusion, ymin=-Inf, ymax=Inf)
+  plot4 <- plot4 + geom_rect(data=rect, aes(xmin=xmin, xmax=xmax, ymin=ymin, ymax=ymax),
+                             color="grey50",
+                             alpha=0.2,
+                             inherit.aes = FALSE)
+  
+  
+  
+  
+  #Before.Event1 = c(paste0(compliance.bE1,"%"),paste0(motivation.bE1,"%"))
+  #After.Event1.Before.Event2 = c(paste0(compliance.AE1.BE2,"%"),paste0(motivation.AE1.BE2,"%"))
+  #Window = c(paste0(compliance_window,"%"),paste0(motivation_window,"%"))
+  #dfff = data.frame(Window)
+  #row.names(dfff)=c("Compliance","Motivation")
+  # 
+  #t <- tableGrob(dfff)
+  #   
+  grid.arrange(plot4, plot1,plot2,spidR_all, layout_matrix = rbind(c(1,1,2),c(1,1,2),c(3,3,4)))
+  
+  #grid.arrange(plot2,spidR_all,plot4,plot1, layout_matrix = rbind(c(1,2,2),c(3,3,4)))
+  # 
+  
+  
+  
+  ####### SYMPTOM CALCUlATIONS
+  
+  chestpains_count = sum(df_window_red$chestpains)
+  confused_count = sum(df_window_red$confused)
+  lightheaded_count = sum(df_window_red$lightheaded)
+  fatigue_count = sum(df_window_red$fatigue)
+  no_symptoms_count = sum(df_window_red$no_symptoms)
+  other_count = sum(df_window_red$other)
+  shortness_of_breath_count = sum(df_window_red$shortness_of_breath)
+  palpitations_count = sum(df_window_red$palpitations)
+  
+  ##### chestpains
+  
+  length_symptoms = length(unique(df_window_red$chestpains))
+  length_af = length(unique(df_window_red$data.indicator.af))
+  ROCdatachest = NULL
+  
+  if(length_symptoms==2 && length_af ==2){
+    ROCit_obj_chestpains <- rocit(score=df_window_red$data.indicator.af,class=df_window_red$chestpains)
+    ROCdatachest<-data.frame(t(sapply(ROCit_obj,c)))
+    ROCdatachest<-select(ROCdatachest, pos_count, neg_count, AUC )
+    ROCdatachest$pos_count = as.numeric(ROCdatachest$pos_count)
+    ROCdatachest$neg_count = as.numeric(ROCdatachest$neg_count)
+    ROCdatachest$AUC = as.numeric(ROCdatachest$AUC)} else {
+      ROCdatachest$pos_count <- "NA"
+      ROCdatachest$neg_count <- "NA"
+      ROCdatachest$AUC <- "NA"}
+  rm(length_symptoms)
+  rm(length_af)
+  
+  
+  
+  ##### confused
+  #ROCit_obj_confused <- rocit(score=df_window$data.indicator.af,class=df_window$confused)
+  
+  length_symptoms = length(unique(df_window_red$confused))
+  length_af = length(unique(df_window_red$data.indicator.af))
+  ROCdataconfused = NULL
+  
+  if(length_symptoms==2 && length_af ==2){
+    ROCit_obj_confused <- rocit(score=df_window_red$data.indicator.af,class=df_window_red$confused)
+    ROCdataconfused<-data.frame(t(sapply(ROCit_obj,c)))
+    ROCdataconfused<-select(ROCdataconfused, pos_count, neg_count, AUC )
+    ROCdataconfused$pos_count = as.numeric(ROCdataconfused$pos_count)
+    ROCdataconfused$neg_count = as.numeric(ROCdataconfused$neg_count)
+    ROCdataconfused$AUC = as.numeric(ROCdataconfused$AUC)} else {
+      ROCdataconfused$pos_count <- "NA"
+      ROCdataconfused$neg_count <- "NA"
+      ROCdataconfused$AUC <- "NA"}
+  rm(length_symptoms)
+  rm(length_af)
+  
+  ##### fatigue
+  #ROCit_obj_fatigue <- rocit(score=df_window$data.indicator.af,class=df_window$fatigue)
+  
+  length_symptoms = length(unique(df_window_red$fatigue))
+  length_af = length(unique(df_window_red$data.indicator.af))
+  ROCdatafatigue = NULL
+  
+  if(length_symptoms==2 && length_af ==2){
+    ROCit_obj_fatigue <- rocit(score=df_window_red$data.indicator.af,class=df_window_red$fatigue)
+    ROCdatafatigue<-data.frame(t(sapply(ROCit_obj,c)))
+    ROCdatafatigue<-select(ROCdatafatigue, pos_count, neg_count, AUC )
+    ROCdatafatigue$pos_count = as.numeric(ROCdatafatigue$pos_count)
+    ROCdatafatigue$neg_count = as.numeric(ROCdatafatigue$neg_count)
+    ROCdatafatigue$AUC = as.numeric(ROCdatafatigue$AUC)} else {
+      ROCdatafatigue$pos_count <- "NA"
+      ROCdatafatigue$neg_count <- "NA"
+      ROCdatafatigue$AUC <- "NA"}
+  rm(length_symptoms)
+  rm(length_af)
+  ##### lightheaded
+  #ROCit_obj_lightheaded <- rocit(score=df_window$data.indicator.af,class=df_window$lightheaded)
+  
+  length_symptoms = length(unique(df_window_red$lightheaded))
+  length_af = length(unique(df_window_red$data.indicator.af))
+  ROCdatalightheaded = NULL
+  
+  if(length_symptoms==2 && length_af ==2){
+    ROCit_obj_lightheaded <- rocit(score=df_window_red$data.indicator.af,class=df_window_red$lightheaded)
+    ROCdatalightheaded<-data.frame(t(sapply(ROCit_obj,c)))
+    ROCdatalightheaded<-select(ROCdatalightheaded, pos_count, neg_count, AUC )
+    ROCdatalightheaded$pos_count = as.numeric(ROCdatalightheaded$pos_count)
+    ROCdatalightheaded$neg_count = as.numeric(ROCdatalightheaded$neg_count)
+    ROCdatalightheaded$AUC = as.numeric(ROCdatalightheaded$AUC)} else {
+      ROCdatalightheaded$pos_count <- "NA"
+      ROCdatalightheaded$neg_count <- "NA"
+      ROCdatalightheaded$AUC <- "NA"}
+  rm(length_symptoms)
+  rm(length_af)
+  
+  
+  ##### no_symptoms
+  
+  length_symptoms = length(unique(df_window_red$no_symptoms))
+  length_af = length(unique(df_window_red$data.indicator.af))
+  ROCdatanosymptoms = NULL
+  
+  if(length_symptoms==2 && length_af ==2){
+    ROCit_obj_no_symptoms <- rocit(score=df_window_red$data.indicator.af,class=df_window_red$no_symptoms)
+    ROCdatanosymptoms<-data.frame(t(sapply(ROCit_obj,c)))
+    ROCdatanosymptoms<-select(ROCdatanosymptoms, pos_count, neg_count, AUC )
+    ROCdatanosymptoms$pos_count = as.numeric(ROCdatanosymptoms$pos_count)
+    ROCdatanosymptoms$neg_count = as.numeric(ROCdatanosymptoms$neg_count)
+    ROCdatanosymptoms$AUC = as.numeric(ROCdatanosymptoms$AUC)} else {
+      ROCdatanosymptoms$pos_count <- "NA"
+      ROCdatanosymptoms$neg_count <- "NA"
+      ROCdatanosymptoms$AUC <- "NA"}
+  rm(length_symptoms)
+  rm(length_af)
+  ##### other
+  length_symptoms = length(unique(df_window_red$other))
+  length_af = length(unique(df_window_red$data.indicator.af))
+  ROCdataother = NULL
+  
+  if(length_symptoms==2 && length_af ==2){
+    ROCit_obj_other <- rocit(score=df_window_red$data.indicator.af,class=df_window_red$other)
+    ROCdataother<-data.frame(t(sapply(ROCit_obj,c)))
+    ROCdataother<-select(ROCdataother, pos_count, neg_count, AUC )
+    ROCdataother$pos_count = as.numeric(ROCdataother$pos_count)
+    ROCdataother$neg_count = as.numeric(ROCdataother$neg_count)
+    ROCdataother$AUC = as.numeric(ROCdataother$AUC)} else {
+      ROCdataother$pos_count <- "NA"
+      ROCdataother$neg_count <- "NA"
+      ROCdataother$AUC <- "NA"}
+  rm(length_symptoms)
+  rm(length_af)
+  ##### shortness_of_breath
+  length_symptoms = length(unique(df_window_red$shortness_of_breath))
+  length_af = length(unique(df_window_red$data.indicator.af))
+  ROCdatasob = NULL
+  
+  if(length_symptoms==2 && length_af ==2){
+    ROCit_obj_shortness_of_breath <- rocit(score=df_window_red$data.indicator.af,class=df_window_red$shortness_of_breath)
+    ROCdatasob<-data.frame(t(sapply(ROCit_obj,c)))
+    ROCdatasob<-select(ROCdatasob, pos_count, neg_count, AUC )
+    ROCdatasob$pos_count = as.numeric(ROCdatasob$pos_count)
+    ROCdatasob$neg_count = as.numeric(ROCdatasob$neg_count)
+    ROCdatasob$AUC = as.numeric(ROCdatasob$AUC)} else {
+      ROCdatasob$pos_count <- "NA"
+      ROCdatasob$neg_count <- "NA"
+      ROCdatasob$AUC <- "NA"}
+  rm(length_symptoms)
+  rm(length_af)
+  
+  
+  ##### palpitations
+  
+  length_symptoms = length(unique(df_window_red$palpitations))
+  length_af = length(unique(df_window_red$data.indicator.af))
+  ROCdatapalp = NULL
+  
+  if(length_symptoms==2 && length_af ==2){
+    ROCit_obj_palpitations <- rocit(score=df_window_red$data.indicator.af,class=df_window_red$palpitations)
+    ROCdatapalp<-data.frame(t(sapply(ROCit_obj,c)))
+    ROCdatapalp<-select(ROCdatapalp, pos_count, neg_count, AUC )
+    ROCdatapalp$pos_count = as.numeric(ROCdatapalp$pos_count)
+    ROCdatapalp$neg_count = as.numeric(ROCdatapalp$neg_count)
+    ROCdatapalp$AUC = as.numeric(ROCdatapalp$AUC)} else {
+      ROCdatapalp$pos_count <- "NA"
+      ROCdatapalp$neg_count <- "NA"
+      ROCdatapalp$AUC <- "NA"}
+  
+  #########
+  
+  
+  
+  
+  summary <- data.frame(UserID[i],EventInclusion, EventExclusion, Event1, Total_days, Tot_MeasurementsNA, Tot_Urgent_MeasurementsNA, Tot_Warning_MeasurementsNA, Tot_Quality_MeasurementsNA, Tot_Normal_MeasurementsNA, Tot_Measurements_NoQualityNA, Tot_Measurements_SymptomsNA, Tot_Measurements_Symptoms_NOQUALITYNA, Tot_NA_Measurements, Tot_NA_Symptoms, Tot_Measurements, Tot_Urgent_Measurements, Tot_Warning_Measurements, Tot_Quality_Measurements, Tot_Normal_Measurements, Tot_Measurements_NoQuality, Tot_Measurements_Symptoms, Tot_Measurements_Symptoms_NOQUALITY, Symptoms_AF, Symptoms_nonAF, Symptoms_warning, Symptoms_normal, Symptoms_qual, Total_days, Total_days_motivation_metbE1, compliance_window, motivation_window, ratio_sAF_AF, ratio_sAF_all, ratio_AF_all, ratio_s_all, sensitivity, specificity, accuracy,length_symptoms, length_af, ROCdata,Event_Flutter,palpitations_count, ROCdatapalp,shortness_of_breath_count, ROCdatasob,other_count, other_count, ROCdataother,no_symptoms_count, ROCdatanosymptoms,lightheaded_count, ROCdatalightheaded, fatigue_count, ROCdatafatigue, confused_count, ROCdataconfused, chestpains_count, ROCdatachest)  
+  
+  
+  slide7 <- rbind(slide7,summary)
+}
+write_xlsx(slide7, "/Volumes/GoogleDrive/Shared drives/9. Clinical/9.6 Data reporting/AZM/PRE-ECV /ggplt/slide7.xlsx")
+#write.csv(slide7, file= "/Volumes/GoogleDrive/Shared drives/9. Clinical/9.6 Data reporting/AZM/PRE-ECV /ggplt/slide7.csv")
+
+dev.off()
+```
+
+
+
+
+
+```{r eval=FALSE, include=FALSE}
+#UserID = unique(Measurements$userIds.0)
+
+pdf(file = "PDF_slide4.pdf",width = 6, height = 20) 
+for(i in 1:length(UserID))
+{
+  df = subset(Measurements,userIds.0 == UserID[i])
+  df$data.measurement_timestamp=as.Date(df$data.measurement_timestamp)
+  df$val = 1
+  
+  tot = nrow(df)
+  data=as.data.frame(table(df$data.context.symptoms.0,df$data.indicator))
+  data$fraction = fraction=round((data$Freq/tot)*100,1)
+  
+  data1 = as.data.frame(table(df$data.indicator))
+  data1$new = paste0(data1$Var1," \n",round(data1$Freq*100/sum(data1$Freq),2),"%")
+  data1$new=cumsum(data1$Freq)
+  
+  df$data.measurement_timestamp=as.Date(df$data.measurement_timestamp)
+  
+  Event1 = Event[Event$FC.ID == UserID[i], ][2]$EVENT.1 
+  Event2 = Event[Event$FC.ID == UserID[i], ][4]$EVENT.2 
+  
+  df$data.context.symptoms.0 <- as.character(df$data.context.symptoms.0)
+  df$symptoms <- as.numeric(ifelse((df$data.context.symptoms.0 == "NA")|(df$data.context.symptoms.0 == "No symptoms"),"0", "200"))
+  min <- min(df$data.measurement_timestamp)
+  max <- max(df$data.measurement_timestamp)
+  
+  
+  lightheaded.df = subset(df,data.context.symptoms.0 == "Lightheaded")
+  Palpitations.df = subset(df,data.context.symptoms.0 == "Palpitations")
+  Fatigue.df = subset(df,data.context.symptoms.0 == "Fatigue")
+  ShortBreath.df = subset(df,data.context.symptoms.0 == "Short Breath")
+  other.df = subset(df,data.context.symptoms.0 == "other")
+  ChestPains.df = subset(df,data.context.symptoms.0 == "Chest Pains")
+  Confused.df = subset(df,data.context.symptoms.0 == "Confused")
+  
+  p0 =ggplot(df) + 
+    geom_point(aes(x=data.measurement_timestamp, 
+                   y=data.heartrate, color=data.indicator)) + 
+    scale_colour_manual(values = c("Warning" = "orange", "Urgent" = "red",
+                                   "Normal" = "green","Quality" = "blue",
+                                   "Symptoms Was Present"="black"))+ 
+    xlab("Date/time") + ylab("Heart rate (BPM)") + ylim(20, 210)+ theme_minimal() + 
+    labs(color='Heart rhythm') +
+    #labs(title = "Heart Rate vs Heart Rhythm")+
+    theme(legend.title =element_blank(),legend.position = "top")+
+    geom_vline(xintercept = Event1, color = "red",size=1)+
+    geom_vline(xintercept = Event2, color = "blue",size=1)
+  
+  p1 =ggplot(Palpitations.df, aes(x = data.measurement_timestamp,y = val, color=data.indicator)) + 
+    geom_bar(stat = "identity", width = 0.1)+ylim(0,1)+ xlim(min,max)+ theme_minimal()+theme(legend.title =element_blank(),legend.position = "none") +  scale_colour_manual(values = c("Warning" = "orange", "Urgent" = "red",
+                                                                                                                                                                                       "Normal" = "green","Quality" = "blue"))+ 
+    labs(x="Date",y="",title = "Palpitations")
+  
+  p2 =ggplot(Fatigue.df, aes(x = data.measurement_timestamp,y = val,color=data.indicator)) + 
+    geom_bar(stat = "identity", width = 0.1)+ylim(0,1)+ xlim(min,max)+ theme_minimal()+ theme(legend.title =element_blank(),legend.position = "none")+  scale_colour_manual(values = c("Warning" = "orange", "Urgent" = "red",
+                                                                                                                                                                                       "Normal" = "green","Quality" = "blue"))+ 
+    labs(x="Date",y="",title = "Fatigue")
+  
+  p3 =ggplot(ShortBreath.df, aes(x = data.measurement_timestamp,y = val,color=data.indicator)) + 
+    geom_bar(stat = "identity", width = 0.1)+ylim(0,1)+ xlim(min,max)+ theme_minimal()+theme(legend.title =element_blank(),legend.position = "none")+  scale_colour_manual(values = c("Warning" = "orange", "Urgent" = "red",
+                                                                                                                                                                                      "Normal" = "green","Quality" = "blue"))+ 
+    labs(x="Date",y="",title = "Short Breath")
+  
+  p4 =ggplot(other.df, aes(x = data.measurement_timestamp,y = val,color=data.indicator)) + 
+    geom_bar(stat = "identity", width = 0.1)+ylim(0,1)+ xlim(min,max)+ theme_minimal()+theme(legend.title =element_blank(),legend.position = "none")+  scale_colour_manual(values = c("Warning" = "orange", "Urgent" = "red",
+                                                                                                                                                                                      "Normal" = "green","Quality" = "blue"))+ 
+    labs(x="Date",y="",title = "Other")
+  
+  p5 =ggplot(ChestPains.df, aes(x = data.measurement_timestamp,y = val,color=data.indicator)) + 
+    geom_bar(stat = "identity", width = 0.1)+ylim(0,1)+ xlim(min,max)+ theme_minimal()+theme(legend.title =element_blank(),legend.position = "none")+  scale_colour_manual(values = c("Warning" = "orange", "Urgent" = "red",
+                                                                                                                                                                                      "Normal" = "green","Quality" = "blue"))+ 
+    labs(x="Date",y="",title = "Chest Pains")
+  
+  p6 =ggplot(Confused.df, aes(x = data.measurement_timestamp,y = val,color=data.indicator)) + 
+    geom_bar(stat = "identity", width = 0.1)+ylim(0,1)+ xlim(min,max)+ theme_minimal()+theme(legend.title =element_blank(),legend.position = "none")+  scale_colour_manual(values = c("Warning" = "orange", "Urgent" = "red",
+                                                                                                                                                                                      "Normal" = "green","Quality" = "blue"))+ 
+    labs(x="Date",y="",title = "Confused")
+  
+  p7 =ggplot(lightheaded.df, aes(x = data.measurement_timestamp,y = val,color=data.indicator)) + 
+    geom_bar(stat = "identity", width = 0.1)+ylim(0,1)+ xlim(min,max)+ theme_minimal()+theme(legend.title =element_blank(),legend.position = "none", )+  scale_colour_manual(values = c("Warning" = "orange", "Urgent" = "red",
+                                                                                                                                                                                        "Normal" = "green","Quality" = "blue"))+ 
+    labs(x="Date",y="",title = "Lightheaded") 
+  
+  tp = textGrob(paste0("\nUser ID: ",UserID[i]))
+  
+  grid.arrange(p0,p1,p2,p3,p4,p5,p6,p7,ncol = 1,top=tp)
+}
+
+dev.off()
+
+
+```
+
+
