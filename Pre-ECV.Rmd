@@ -424,7 +424,7 @@ for(i in 1:nrow(Event))
 ######################             EVENT BASED ANALYSIS   #################################
 ###########################################################################################
 #UserID = unique(Measurements$userIds.0)
-slide7 = NULL
+summary_data = NULL
 pdf(file = "PDF_slide7.pdf",width = 20, height = 10)
 
 #####DATA SUBSETTER FOR TESTING AND DEVELOPMENT####
@@ -488,8 +488,8 @@ for(i in 1:length(UserID))
 
     ##Subset symptomatic DATA
   
-  symptoms_before_ECV = nrow(Data_before_ECV  %>% filter(data.context.symptoms.0 == "No symptoms"))
-  symptoms_after_ECV = nrow(Data_after_ECV  %>% filter(data.context.symptoms.0 == "No symptoms"))
+  symptoms_before_ECV = nrow(Data_before_ECV  %>% filter(data.context.symptoms.0 != "No symptoms"))
+  symptoms_after_ECV = nrow(Data_after_ECV  %>% filter(data.context.symptoms.0 != "No symptoms"))
   Symptomburden_before_ECV = symptoms_before_ECV/nrow(Data_before_ECV)
   Symptomburden_after_ECV = symptoms_after_ECV/nrow(Data_after_ECV)
 
@@ -513,10 +513,10 @@ for(i in 1:length(UserID))
     summarise(cnt=n())%>%
      arrange(desc(cnt))
    
-  if(nrow(dom_symptom_before_ECV) == 0) { dom_symptom_before_ECV<- rbind(dom_symptom_before_ECV, c(c("NA","NA" )))}
+  if(nrow(dom_symptom_before_ECV) == 0) { dom_symptom_before_ECV<- rbind(dom_symptom_before_ECV, c("NA","NA" ))}
    
    amount_symptoms_before_ECV <- nrow(dom_symptom_before_ECV)
-   dom_symptom_before_ECV <- dom_symptom_before_ECV$symptoms[[1]]
+   dom_symptom_before_ECV <- dom_symptom_before_ECV[[1,1]]
    
       #if(length(dom_symptom_before_ECV) == 0) {dom_symptom_before_ECV = "NA"} else { dom_symptom_before_ECV = dom_symptom_before_ECV}
 
@@ -525,11 +525,11 @@ for(i in 1:length(UserID))
     group_by(symptoms=data.context.symptoms.0) %>%
     summarise(cnt=n())%>%
      arrange(desc(cnt))
-    if(nrow(dom_symptom_after_ECV) == 0) { dom_symptom_after_ECV<- rbind(dom_symptom_after_ECV, c(c("NA", "NA")))}
+    if(nrow(dom_symptom_after_ECV) == 0) { dom_symptom_after_ECV<- rbind(dom_symptom_after_ECV, c("NA", "NA"))}
 
      amount_symptoms_after_ECV <- nrow(dom_symptom_after_ECV)
 
-   dom_symptom_after_ECV <- dom_symptom_after_ECV$symptoms[[1]]
+   dom_symptom_after_ECV <- dom_symptom_after_ECV[[1,1]]
    
   # if(length(dom_symptom_after_ECV) == 0) {dom_symptom_after_ECV = "NA"} else { dom_symptom_after_ECV = dom_symptom_after_ECV}
 
@@ -898,10 +898,12 @@ for(i in 1:length(UserID))
   summary <- data.frame(UserID[i],EventInclusion, EventExclusion, Event1, Total_days, Tot_MeasurementsNA, Tot_Urgent_MeasurementsNA, Tot_Warning_MeasurementsNA, Tot_Quality_MeasurementsNA, Tot_Normal_MeasurementsNA, Tot_Measurements_NoQualityNA, Tot_Measurements_SymptomsNA, Tot_Measurements_Symptoms_NOQUALITYNA, Tot_NA_Measurements, Tot_NA_Symptoms, Tot_Measurements, Tot_Urgent_Measurements, Tot_Warning_Measurements, Tot_Quality_Measurements, Tot_Normal_Measurements, Tot_Measurements_NoQuality, Tot_Measurements_Symptoms, Tot_Measurements_Symptoms_NOQUALITY, Symptoms_AF, Symptoms_nonAF, Symptoms_warning, Symptoms_normal, Symptoms_qual, Total_days, Total_days_motivation_metbE1, compliance_window, motivation_window, ratio_sAF_AF, ratio_sAF_all, ratio_AF_all, ratio_s_all, sensitivity, specificity, accuracy,length_symptoms, length_af, ROCdata,Event_Flutter,palpitations_count, ROCdatapalp,shortness_of_breath_count, ROCdatasob,other_count, other_count, ROCdataother,no_symptoms_count, ROCdatanosymptoms,lightheaded_count, ROCdatalightheaded, fatigue_count, ROCdatafatigue, confused_count, ROCdataconfused, chestpains_count, ROCdatachest, amount_data_before_ECV, Symptomburden_before_ECV, Symptomburden_after_ECV, amount_data_after_ECV, symptoms_AF_before_ECV, no_symptoms_AF_before_ECV, symptoms_AF_after_ECV, no_symptoms_AF_after_ECV,  symptoms_non_AF_before_ECV, no_symptoms_non_AF_before_ECV, symptoms_non_AF_after_ECV, no_symptoms_non_AF_after_ECV, dom_symptom_before_ECV, amount_symptoms_before_ECV, dom_symptom_after_ECV, amount_symptoms_after_ECV)  
   
   
-  
-  slide7 <- rbind(slide7,summary)
+summary_data <- rbind(summary_data,summary)  
+#slide7 <- rbind(slide7,summary)
+
+#slide7 <- rbind(slide7)
 }
-write_xlsx(slide7, "/Volumes/GoogleDrive/Shared drives/9. Clinical/9.6 Data reporting/AZM/PRE-ECV /ggplt/slide7.xlsx")
+write_xlsx(summary_data, "/Volumes/GoogleDrive/Shared drives/9. Clinical/9.6 Data reporting/AZM/PRE-ECV /ggplt/summary_data.xlsx")
 #write.csv(slide7, file= "/Volumes/GoogleDrive/Shared drives/9. Clinical/9.6 Data reporting/AZM/PRE-ECV /ggplt/slide7.csv")
 
 dev.off()
